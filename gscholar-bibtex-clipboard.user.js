@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name          gscholar-bibtex-clipboard
 // @description   add a bibtex link in Google Scholar to Clipboard
-// @homepage      https://www.monperrus.net/martin/direct-bibtex-in-google-scholar
-// @namespace     https://www.monperrus.net/martin/
+// @homepage      https://github.com/ColinConwell/GScholar-BibTex-Copy
 // @author        Henrique Rieger <henriquerieger2001@gmail.com>
 // @author        Martin Monperrus <martin.monperrus@gnieh.org>
 // @author        Nicolas Harrand <harrand@kth.se>
+// @author        Colin Conwell <conwell@g.harvard.edu>
 // @license       MIT
-// @version       0.4
+// @version       0.1
 // @match         https://scholar.google.com/*
 // @match         https://scholar.google.fr/*
 // @match         https://scholar.google.se/*
@@ -17,84 +17,104 @@
 // @grant         GM_setClipboard
 // ==/UserScript==
 
-// Based on the script by Martin Monperrus and Nicolas Harrand available at:
-// https://github.com/monperrus/misc/raw/master/direct-bibtex-in-google-scholar.user.js
-
 var $ = window.jQuery;
+
+let remove_original=true;
+// Set to true to keep the original "Import into BibTeX" link
+
+function formatBibTeX(bibtex) {
+  // Remove any existing line breaks
+  bibtex = bibtex.replace(/\n/g, ' ').trim();
+
+  // Extract the entry type and key
+  let match = bibtex.match(/^(@\w+\s*{\s*[\w\-:]+\s*,)/);
+  let entryStart = match ? match[1] : '';
+  let rest = bibtex.slice(entryStart.length).trim();
+
+  // Split the remaining content into fields
+  let fields = rest.split(/,\s*(?=[a-z]+\s*=)/);
+
+  // Start formatted BibTeX with entry type and key
+  let formattedBibTeX = entryStart + '\n';
+
+  // Format each field
+  fields.forEach((field, index) => {
+    field = field.trim();
+    if (field) {
+      // Remove trailing comma and closing brace if present
+      field = field.replace(/,\s*$/, '').replace(/}\s*$/, '');
+      formattedBibTeX += '  ' + field + (index < fields.length - 1 ? '},' : '') + '\n';
+    }
+  });
+
+  // Close the entry
+  formattedBibTeX += '}';
+
+  return formattedBibTeX;
+}
 
 function main() {
   const url = new URL(window.location.href);
   const isFavsPage = url.searchParams.has("scilib");
   const authuser = url.searchParams.get("authuser");
 
-  // For each result of Google Scholar
   $(".gs_r").each((index, result) => {
-    // Getting the paper title
     const text = $(result).find(".gs_rt").text();
-
-    // Where to add the data: add it at the end of the menu which is under each entry
     const whereList = $(result).find(".gs_fl");
     const where = $(whereList.get(whereList.length - 1));
-
-    // Create a DIV element to contain the BibTeX data
     const container = $("<pre/>");
     where.after(container);
 
-    // Create the code block for BibTeX
-    const codeContainer = $(
-      '<div style="background-color: #EEEEEE; border-radius: 5px; padding: 0 10px 0 10px; border-color: darkgray; border-style: solid; border-width:1px;"/>',
-    );
-    const code = $(
-      '<pre style="white-space: pre-wrap;white-space: -moz-pre-wrap;white-space: -pre-wrap;white-space: -o-pre-wrap;word-wrap: break-word;"/>',
-    );
+    const codeContainer = $('<div style="background-color: #EEEEEE; border-radius: 5px; padding: 0 10px 0 10px; border-color: darkgray; border-style: solid; border-width:1px;"/>');
+    const code = $('<pre style="white-space: pre-wrap;white-space: -moz-pre-wrap;white-space: -pre-wrap;white-space: -o-pre-wrap;word-wrap: break-word;"/>');
     codeContainer.append(code);
-    // Adding a link to trigger the BibTeX download
-    const noteLink = $('<a href="javascript:void(0)">BibTeX</a>');
+
+    const noteLink = $('<a href="javascript:void(0)">Copy BibTeX</a>');
     noteLink.click(() => {
       const elem = $(result).find("a.gs_nph").get(0);
-
-      // Find the IDs needed for the request
       const articleId = $(result).attr("data-aid");
       const citationId = $(result).attr("data-cid");
 
-      // Build the URL based on the current context
       let url;
       if (isFavsPage) {
-        url = "https://scholar.google.com/scholar?scila=" + citationId +
-          "&output=cite";
+        url = "https://scholar.google.com/scholar?scila=" + citationId + "&output=cite";
       } else {
-        url = "https://scholar.google.com/scholar?q=info:" + articleId +
-          ":scholar.google.com/&output=cite";
+        url = "https://scholar.google.com/scholar?q=info:" + articleId + ":scholar.google.com/&output=cite";
       }
 
-      // Add user param to URL if needed
       if (authuser != null) {
         url += "&authuser=" + authuser;
       }
 
       $.ajax({ "url": url })
         .done((data) => {
-          // The final URL, hosted on googleusercontent.com
-          // So there is a need for a cross-domain call
           const citationUrl = $(data).find(".gs_citi").attr("href");
-
-          // Calling the URL with the BibTeX content
           GM_xmlhttpRequest({
             method: "GET",
             url: citationUrl,
             onload: function (responseDetails) {
               const bibtex = responseDetails.responseText;
-              code.text(bibtex);
+              const formattedBibTeX = formatBibTeX(bibtex);
+              code.text(formattedBibTeX);
               container.after(codeContainer);
               container.text("-- Copied BibTeX to clipboard! --\n");
-              GM_setClipboard(bibtex.replace(/\n/g, " "));
+
+              // Copy formatted BibTeX to clipboard
+              GM_setClipboard(formattedBibTeX);
             },
           });
         });
     });
 
-    // Append the button to the menu
     where.append(noteLink);
+
+    // Remove the original "Import into BibTeX" link if flag is set
+    if (remove_original) {
+      where.find('a.gs_nta.gs_nph').filter(function() {
+        return $(this).text() === 'Import into BibTeX';
+      }).remove();
+    }
+
   });
 }
 
